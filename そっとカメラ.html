@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>そっとカメラ</title>
+<style>
+:root{--bg:#0b0b0e;--fg:#d8d8e0;--accent:#e8b4a0;--muted:#6b6b78;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+body{display:flex;flex-direction:column;height:100%}
+#stage{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center;background:#000}
+video{width:100%;height:100%;object-fit:contain}
+#msg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:24px;line-height:1.7;color:var(--muted)}
+#bar{display:flex;align-items:center;justify-content:space-around;padding:14px 12px 18px}
+button{font:inherit;color:var(--fg);background:none;border:1px solid #2a2a33;border-radius:999px;padding:9px 15px}
+button.on{background:var(--accent);color:#1a1a1a;border-color:var(--accent)}
+#shutter{width:76px;height:76px;border-radius:50%;border:4px solid var(--fg);background:var(--accent);padding:0}
+#shutter:active{transform:scale(.94)}
+#thumbs{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;min-height:64px}
+#thumbs img{height:56px;width:56px;object-fit:cover;border-radius:8px;flex:none}
+#hint{font-size:12px;color:var(--muted);text-align:center;padding:0 12px 6px}
+#ed{position:fixed;inset:0;background:#000;display:none;flex-direction:column;z-index:5;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);overflow-y:auto}
+#ed .pv{flex:1;min-height:200px;display:flex;align-items:center;justify-content:center;padding:8px}
+#ed img{max-width:100%;max-height:100%;object-fit:contain}
+#ed .ctl{padding:8px 14px 14px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px}
+.chips button{flex:none;font-size:13px;padding:7px 12px}
+.row{display:flex;align-items:center;gap:10px;font-size:13px;margin:6px 0}
+.row span{width:64px;color:var(--muted)}
+.row input{flex:1;accent-color:var(--accent)}
+.acts{display:flex;gap:8px;justify-content:space-between;margin-top:10px}
+#dim{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
+</style>
+</head>
+<body>
+<div id="stage"><video id="v" autoplay playsinline muted></video><div id="msg"></div></div>
+<div id="thumbs"></div>
+<div id="hint">音は鳴りません。フラッシュも使いません。撮った写真をタップで編集</div>
+<div id="bar">
+  <button id="flip">切替</button>
+  <button id="shutter" aria-label="撮影"></button>
+  <button id="dimBtn">画面を暗く</button>
+</div>
+
+<div id="ed">
+  <div class="pv"><img id="pvimg" alt=""></div>
+  <div class="ctl">
+    <div class="chips" id="chips"></div>
+    <div class="row"><span>ふんわり肌</span><input type="range" id="soft" min="0" max="100" value="0"></div>
+    <div class="row"><span>明るさ</span><input type="range" id="bri" min="-50" max="50" value="0"></div>
+    <div class="row"><span>コントラスト</span><input type="range" id="con" min="-50" max="50" value="0"></div>
+    <div class="row"><span>あたたかさ</span><input type="range" id="warm" min="-50" max="50" value="0"></div>
+    <div class="row"><span>鮮やかさ</span><input type="range" id="sat" min="-100" max="50" value="0"></div>
+    <div class="acts">
+      <button id="edClose">閉じる</button>
+      <button id="reset">リセット</button>
+      <button id="export" class="on">保存用に書き出す</button>
+    </div>
+    <p id="expmsg" style="font-size:12px;color:var(--muted);margin:10px 0 0;display:none">下の写真を長押しして「写真に追加」で保存してください。</p>
+    <div id="expwrap" style="text-align:center"></div>
+  </div>
+</div>
+<div id="dim"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const v=$('v'),thumbs=$('thumbs');
+let facing='environment',stream=null,dimmed=false,cur=null,raf=0;
+async function start(){
+  try{
+    if(stream)stream.getTracks().forEach(t=>t.stop());
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    v.srcObject=stream;$('msg').style.display='none';
+  }catch(e){
+    $('msg').style.display='flex';
+    $('msg').textContent='カメラを使えませんでした。ブラウザのカメラ許可を確認してください。アプリ内表示だと使えない場合は、Safari/Chromeでページを開いてください。';
+  }
+}
+function shoot(){
+  if(!v.videoWidth)return;
+  const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  const img=new Image();img.src=c.toDataURL('image/jpeg',0.6);
+  img.onclick=()=>openEd(c);
+  thumbs.prepend(img);
+}
+$('shutter').onclick=shoot;
+$('flip').onclick=()=>{facing=facing==='environment'?'user':'environment';start()};
+$('dimBtn').onclick=()=>{dimmed=!dimmed;$('dim').style.opacity=dimmed?0.8:0;$('dimBtn').textContent=dimmed?'明るく戻す':'画面を暗く'};
+
+/* ---- 編集 ---- */
+const presets={
+  '元の写真':{soft:0,bri:0,con:0,warm:0,sat:0},
+  'ふんわり':{soft:55,bri:10,con:-10,warm:8,sat:-5},
+  'やさしい肌':{soft:70,bri:14,con:-6,warm:14,sat:-12},
+  'あたたか':{soft:25,bri:8,con:0,warm:30,sat:10},
+  'ミルキー':{soft:45,bri:22,con:-22,warm:6,sat:-30},
+  'モノクロ':{soft:20,bri:4,con:12,warm:0,sat:-100},
+  'セピア':{soft:25,bri:4,con:0,warm:42,sat:-60}
+};
+const ids=['soft','bri','con','warm','sat'];
+Object.keys(presets).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{ids.forEach(i=>$(i).value=presets[k][i]);schedule()};$('chips').appendChild(b)});
+ids.forEach(i=>$(i).oninput=schedule);
+$('reset').onclick=()=>{ids.forEach(i=>$(i).value=0);schedule()};
+function openEd(c){cur=c;$('expwrap').innerHTML='';$('expmsg').style.display='none';ids.forEach(i=>$(i).value=0);$('ed').style.display='flex';schedule()}
+$('edClose').onclick=()=>$('ed').style.display='none';
+function schedule(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{const o=process(cur,900);$('pvimg').src=o.toDataURL('image/jpeg',0.85)})}
+function process(src,maxW){
+  const s=Math.min(1,maxW/src.width),w=Math.round(src.width*s),h=Math.round(src.height*s);
+  const out=document.createElement('canvas');out.width=w;out.height=h;
+  const x=out.getContext('2d',{willReadFrequently:true});
+  x.drawImage(src,0,0,w,h);
+  const P={};ids.forEach(i=>P[i]=+$(i).value);
+  const d=x.getImageData(0,0,w,h),a=d.data;
+  let bl=null;
+  if(P.soft>0){
+    const sm=document.createElement('canvas'),f=Math.max(4,Math.round(w/60));
+    sm.width=Math.max(1,Math.round(w/f));sm.height=Math.max(1,Math.round(h/f));
+    const sx=sm.getContext('2d');sx.imageSmoothingQuality='high';sx.drawImage(out,0,0,sm.width,sm.height);
+    const big=document.createElement('canvas');big.width=w;big.height=h;
+    const bx=big.getContext('2d');bx.imageSmoothingEnabled=true;bx.imageSmoothingQuality='high';bx.drawImage(sm,0,0,w,h);
+    bl=bx.getImageData(0,0,w,h).data;
+  }
+  const sf=P.soft/100*0.75,br=P.bri*2.2,cf=1+P.con/100,wm=P.warm*0.9,st=1+P.sat/100;
+  for(let i=0;i<a.length;i+=4){
+    let r=a[i],g=a[i+1],b=a[i+2];
+    if(bl){r=r*(1-sf)+bl[i]*sf;g=g*(1-sf)+bl[i+1]*sf;b=b*(1-sf)+bl[i+2]*sf}
+    r=(r-128)*cf+128+br+wm;g=(g-128)*cf+128+br+wm*0.25;b=(b-128)*cf+128+br-wm;
+    const l=0.299*r+0.587*g+0.114*b;
+    r=l+(r-l)*st;g=l+(g-l)*st;b=l+(b-l)*st;
+    a[i]=r<0?0:r>255?255:r;a[i+1]=g<0?0:g>255?255:g;a[i+2]=b<0?0:b>255?255:b;
+  }
+  x.putImageData(d,0,0);
+  return out;
+}
+$('export').onclick=async()=>{
+  const o=process(cur,2400);
+  const url=o.toDataURL('image/jpeg',0.92);
+  $('expwrap').innerHTML='<img src="'+url+'" style="max-width:100%;margin-top:8px;border-radius:8px">';
+  $('expmsg').style.display='block';
+  try{
+    const blob=await new Promise(r=>o.toBlob(r,'image/jpeg',0.92));
+    const f=new File([blob],'baby.jpg',{type:'image/jpeg'});
+    if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f]});
+  }catch(e){}
+};
+start();
+</script>
+</body>
+</html>
